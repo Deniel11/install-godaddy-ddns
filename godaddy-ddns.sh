@@ -1,10 +1,14 @@
 #!/bin/sh
 
-VERSION="1.2.0"
+# GoDaddy Dynamic DNS for OPNsense
+
+VERSION="1.3.0"
 
 CONFIG_FILE="/etc/godaddy-ddns.conf"
 LOG_FILE="/var/log/godaddy-ddns.log"
 SCRIPT_PATH="/usr/local/sbin/godaddy-ddns.sh"
+
+OPNSENSE_ACTION_FILE="/usr/local/opnsense/service/conf/actions.d/actions_godaddy_ddns.conf"
 
 API="https://api.godaddy.com/v3/domains/zones"
 
@@ -18,6 +22,11 @@ die()
     log "ERROR: $*"
     printf '%s\n' "$*" >&2
     exit 1
+}
+
+is_opnsense()
+{
+    command -v opnsense-version >/dev/null 2>&1
 }
 
 load_config()
@@ -145,6 +154,7 @@ run_ddns()
 
     if [ "$CURRENT_IP" = "$DNS_IP" ]; then
         log "No update required. Current IP: $CURRENT_IP"
+        printf 'No update required. Current IP: %s\n' "$CURRENT_IP"
         exit 0
     fi
 
@@ -181,6 +191,8 @@ run_ddns()
         "$API/$DOMAIN/dns-records/$RECORD_ID"
     then
         log "DNS record updated successfully: $CURRENT_IP"
+        printf 'DNS record updated successfully: %s\n' "$CURRENT_IP"
+
         rm -f "$RESPONSE_FILE"
         exit 0
     else
@@ -212,6 +224,47 @@ check_dns()
     printf 'DNS IP: %s\n' "$DNS_IP"
 }
 
+install_opnsense_action()
+{
+    if ! is_opnsense; then
+        return 0
+    fi
+
+    if [ "$(id -u)" -ne 0 ]; then
+        die "OPNsense installation must be run as root."
+    fi
+
+    mkdir -p "$(dirname "$OPNSENSE_ACTION_FILE")"
+
+    cat > "$OPNSENSE_ACTION_FILE" <<EOF
+[run]
+command:$SCRIPT_PATH --run
+parameters:
+type:script
+message:Running GoDaddy DDNS update
+description:GoDaddy DDNS update
+EOF
+
+    chmod 644 "$OPNSENSE_ACTION_FILE"
+
+    if service configd restart >/dev/null 2>&1; then
+        log "OPNsense configd restarted successfully."
+    else
+        die "Unable to restart OPNsense configd."
+    fi
+
+    sleep 1
+
+    if configctl godaddy_ddns run >/dev/null 2>&1; then
+        log "OPNsense GoDaddy DDNS configd action registered successfully."
+    else
+        die "GoDaddy DDNS configd action could not be executed."
+    fi
+
+    printf 'OPNsense configd action installed successfully.\n'
+    printf 'Cron command: GoDaddy DDNS update\n'
+}
+
 install_script()
 {
     if [ "$(id -u)" -ne 0 ]; then
@@ -220,10 +273,45 @@ install_script()
 
     mkdir -p "$(dirname "$SCRIPT_PATH")"
 
-    cp "$0" "$SCRIPT_PATH"
+    if [ "$0" != "$SCRIPT_PATH" ]; then
+        cp "$0" "$SCRIPT_PATH" ||
+            die "Unable to install script to $SCRIPT_PATH"
+    fi
+
     chmod 755 "$SCRIPT_PATH"
 
     printf 'Installed to %s\n' "$SCRIPT_PATH"
+
+    if is_opnsense; then
+        install_opnsense_action
+    else
+        printf 'OPNsense was not detected. Configd action was not installed.\n'
+    fi
+}
+
+uninstall_opnsense_action()
+{
+    if ! is_opnsense; then
+        die "OPNsense was not detected."
+    fi
+
+    if [ "$(id -u)" -ne 0 ]; then
+        die "This command must be run as root."
+    fi
+
+    if [ -f "$OPNSENSE_ACTION_FILE" ]; then
+        rm -f "$OPNSENSE_ACTION_FILE"
+
+        if service configd restart >/dev/null 2>&1; then
+            log "OPNsense configd restarted after removing GoDaddy DDNS action."
+        else
+            die "Unable to restart OPNsense configd."
+        fi
+
+        printf 'GoDaddy DDNS configd action removed.\n'
+    else
+        printf 'GoDaddy DDNS configd action was not installed.\n'
+    fi
 }
 
 update_script()
@@ -257,6 +345,23 @@ update_script()
     rm -f "$TMP_FILE"
 
     printf 'Script updated: %s\n' "$SCRIPT_PATH"
+
+    if is_opnsense; then
+        "$SCRIPT_PATH" --install-action
+    fi
+}
+
+install_action_only()
+{
+    if ! is_opnsense; then
+        die "OPNsense was not detected."
+    fi
+
+    if [ "$(id -u)" -ne 0 ]; then
+        die "This command must be run as root."
+    fi
+
+    install_opnsense_action
 }
 
 usage()
@@ -266,19 +371,31 @@ GoDaddy DDNS updater v$VERSION
 
 Usage:
   $0 --configure
+  $0 --install
+  $0 --install-action
+  $0 --uninstall-action
   $0 --update
   $0 --check
   $0 --run
 
 Options:
-  --configure    Create or update the configuration file.
-  --update       Download the latest version from GitHub.
-  --check        Show the current GoDaddy DNS IP.
-  --run          Update the DNS record if the public IP changed.
-  --help         Show this help message.
+  --configure        Create or update the configuration file.
+  --install          Install the script and configure OPNsense integration.
+  --install-action   Install/reinstall the OPNsense configd action.
+  --uninstall-action Remove the OPNsense configd action.
+  --update           Download the latest version from GitHub.
+  --check            Show the current GoDaddy DNS IP.
+  --run              Update the DNS record if the public IP changed.
+  --help             Show this help message.
 
 Configuration:
   $CONFIG_FILE
+
+Script:
+  $SCRIPT_PATH
+
+OPNsense configd action:
+  $OPNSENSE_ACTION_FILE
 
 Log:
   $LOG_FILE
@@ -291,18 +408,35 @@ main()
         --configure)
             configure
             ;;
+
+        --install)
+            install_script
+            ;;
+
+        --install-action)
+            install_action_only
+            ;;
+
+        --uninstall-action)
+            uninstall_opnsense_action
+            ;;
+
         --update)
             update_script
             ;;
+
         --check)
             check_dns
             ;;
+
         --run)
             run_ddns
             ;;
+
         --help|-h)
             usage
             ;;
+
         *)
             usage
             exit 1
