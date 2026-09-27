@@ -1,7 +1,5 @@
 #!/bin/sh
 
-# GoDaddy Dynamic DNS for OPNsense
-
 VERSION="1.2.0"
 
 CONFIG_FILE="/etc/godaddy-ddns.conf"
@@ -187,9 +185,11 @@ run_ddns()
         exit 0
     else
         log "Failed to update DNS record."
+
         if [ -s "$RESPONSE_FILE" ]; then
             log "GoDaddy response: $(cat "$RESPONSE_FILE")"
         fi
+
         rm -f "$RESPONSE_FILE"
         exit 1
     fi
