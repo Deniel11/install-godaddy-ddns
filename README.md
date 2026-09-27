@@ -1,17 +1,28 @@
 # GoDaddy DDNS for OPNsense
 
-Egyszerű GoDaddy Dynamic DNS kliens OPNsense / FreeBSD rendszerhez.
+A lightweight Dynamic DNS client for **OPNsense / FreeBSD** that keeps a GoDaddy DNS `A` record synchronized with the current public IPv4 address.
 
-A script:
-- lekéri a publikus IPv4 címet az `api.ipify.org` szolgáltatásból,
-- lekéri a GoDaddy DNS A rekordot,
-- csak IP-változás esetén frissít,
-- naplóz `/var/log/godaddy-ddns.log` fájlba,
-- a konfigurációt külön fájlban tárolja,
-- a GitHub-ról érkező scriptfrissítés nem írja felül a konfigurációt vagy a GoDaddy PAT-ot,
-- interaktívan felajánlja a meglévő konfiguráció módosítását.
+## Features
 
-## Könyvtárstruktúra
+- Detects the current public IPv4 address using `api.ipify.org`
+- Reads the existing GoDaddy `A` record
+- Updates DNS only when the public IP changes
+- Interactive configuration with existing values offered as defaults
+- Default values:
+  - `DOMAIN`: `your.domain`
+  - `HOST`: `vpn`
+  - `TTL`: `600`
+- Stores the GoDaddy Personal Access Token outside the Git repository
+- Can update itself directly from this GitHub repository
+- Preserves the local configuration during script updates
+- Logs activity to `/var/log/godaddy-ddns.log`
+- Includes a read-only `--check` mode
+
+## Repository
+
+https://github.com/Deniel11/install-godaddy-ddns
+
+Repository layout:
 
 ```text
 .
@@ -20,149 +31,195 @@ A script:
 └── godaddy-ddns.sh
 ```
 
-## 1. GitHub repo beállítása
+## Requirements
 
-Tedd a három fájlt egy GitHub repositoryba.
+The target system must provide:
 
-Példa:
+- OPNsense / FreeBSD
+- `curl`
+- `jq`
 
-```text
-https://github.com/SAJAT-FELHASZNALO/godaddy-ddns-opnsense
-```
+The script is intended to run as `root`.
 
-Az `install.sh` elején állítsd be a repository URL-jét:
+## Installation
 
-```sh
-REPO_RAW="https://raw.githubusercontent.com/SAJAT-FELHASZNALO/godaddy-ddns-opnsense/main"
-```
-
-## 2. Telepítés OPNsense-en
-
-Az OPNsense shellből:
+Run the following commands from the OPNsense shell:
 
 ```sh
-fetch -qo /tmp/godaddy-ddns-install.sh https://raw.githubusercontent.com/SAJAT-FELHASZNALO/godaddy-ddns-opnsense/main/install.sh
+curl -fsSL -o /tmp/godaddy-ddns-install.sh \
+  https://raw.githubusercontent.com/Deniel11/install-godaddy-ddns/main/install.sh
+
 chmod 700 /tmp/godaddy-ddns-install.sh
 /tmp/godaddy-ddns-install.sh
 ```
 
-A telepítő:
-1. letölti a `godaddy-ddns.sh` aktuális verzióját,
-2. telepíti `/usr/local/sbin/godaddy-ddns.sh` alá,
-3. létrehozza a konfigurációt, ha még nincs,
-4. interaktívan bekéri az adatokat.
+The installer:
 
-## 3. Alapértelmezett értékek
+1. Downloads the latest `godaddy-ddns.sh`
+2. Installs it as `/usr/local/sbin/godaddy-ddns.sh`
+3. Creates a backup of an existing installation
+4. Starts configuration on first installation
+5. Preserves an existing configuration during upgrades
 
-Első konfiguráláskor:
+## Configuration
 
-```text
-DOMAIN = your.domain
-HOST   = vpn
-TTL    = 600
-```
-
-A GoDaddy Personal Access Token (PAT) kötelező.
-
-## 4. Újrakonfigurálás
-
-Ha már van konfiguráció:
+Run:
 
 ```sh
 /usr/local/sbin/godaddy-ddns.sh --configure
 ```
 
-A korábbi értékeket felajánlja, így például csak Entert kell nyomni, ha meg akarod tartani őket.
+The script asks for:
 
-## 5. Kézi futtatás
-
-```sh
-/usr/local/sbin/godaddy-ddns.sh
+```text
+Domain [your.domain]:
+Host [vpn]:
+TTL [600]:
+GoDaddy Personal Access Token:
 ```
 
-## 6. GitHub-ról frissítés
+When a configuration already exists, the current values are offered as defaults. Press `Enter` to keep the existing value.
 
-A telepített script frissíthető:
-
-```sh
-/usr/local/sbin/godaddy-ddns.sh --update
-```
-
-A frissítés csak a programfájlt cseréli le.
-
-A konfiguráció:
+The configuration is stored locally in:
 
 ```text
 /etc/godaddy-ddns.conf
 ```
 
-megmarad.
+The file is created with permissions `600`.
 
-A GoDaddy PAT tehát nincs benne a GitHub repositoryban.
+Example:
 
-## 7. Verzió lekérdezése
-
-```sh
-/usr/local/sbin/godaddy-ddns.sh --version
+```text
+DOMAIN='example.com'
+HOST='vpn'
+TTL='600'
+GODADDY_PAT='YOUR_PERSONAL_ACCESS_TOKEN'
 ```
 
-## 8. Tesztelés
+**Do not commit this file to GitHub.**
+
+## GoDaddy Personal Access Token
+
+Create a GoDaddy Personal Access Token with the DNS permissions required for the domain.
+
+The script sends the token using the GoDaddy API authentication format:
+
+```text
+Authorization: sso-key <API_KEY>:<API_SECRET>
+```
+
+If your GoDaddy account provides a Personal Access Token as a single credential, use the credential format required by the current GoDaddy API documentation.
+
+## Usage
+
+### Update DNS
+
+```sh
+/usr/local/sbin/godaddy-ddns.sh
+```
+
+The script:
+
+1. Gets the current public IPv4 address.
+2. Reads the current GoDaddy `A` record.
+3. Compares the addresses.
+4. Exits without changing DNS when they match.
+5. Updates the record when they differ.
+
+### Check status without changing DNS
 
 ```sh
 /usr/local/sbin/godaddy-ddns.sh --check
 ```
 
-A `--check` nem módosítja a DNS rekordot. Csak ellenőrzi:
-- publikus IP,
-- GoDaddy API elérés,
-- jelenlegi A rekord.
+`--check` does not modify DNS.
 
-## 9. Automatikus futtatás OPNsense-en
+### Reconfigure
 
-A legegyszerűbb megoldás az OPNsense cron használata.
+```sh
+/usr/local/sbin/godaddy-ddns.sh --configure
+```
 
-Javasolt például 5 percenként:
+### Update the installed script
+
+```sh
+/usr/local/sbin/godaddy-ddns.sh --update
+```
+
+The update downloads:
+
+```text
+https://raw.githubusercontent.com/Deniel11/install-godaddy-ddns/main/godaddy-ddns.sh
+```
+
+The local configuration at `/etc/godaddy-ddns.conf` is not modified.
+
+The previous installed script is backed up as:
+
+```text
+/usr/local/sbin/godaddy-ddns.sh.bak
+```
+
+### Show version
+
+```sh
+/usr/local/sbin/godaddy-ddns.sh --version
+```
+
+### Show help
+
+```sh
+/usr/local/sbin/godaddy-ddns.sh --help
+```
+
+## Automatic execution
+
+Run the script periodically using the OPNsense cron facility.
+
+For example, every 5 minutes:
 
 ```text
 */5 * * * * /usr/local/sbin/godaddy-ddns.sh
 ```
 
-A script ettől nem fog feleslegesen DNS rekordot módosítani: ha az IP nem változott, csak logol és kilép.
+Running the script frequently is safe because it only performs a DNS update when the public IP has changed.
 
-## Biztonság
+## Logging
 
-A konfigurációs fájl jogosultsága:
+Log file:
 
 ```text
-600
+/var/log/godaddy-ddns.log
 ```
 
-A program:
+## File permissions
+
+Installed script:
 
 ```text
 700
 ```
 
-A PAT soha nem kerül a GitHub repositoryba.
-
-**Ne commitold a `/etc/godaddy-ddns.conf` tartalmát.**
-
-## GoDaddy PAT
-
-A GoDaddy Personal Access Token-t a GoDaddy fiókodban kell létrehozni, megfelelő DNS API jogosultsággal.
-
-A tokennek legalább a szükséges domain DNS módosításához szükséges jogosultsággal kell rendelkeznie.
-
-## Megjegyzés OPNsense-ről
-
-A script FreeBSD/OPNsense környezetre készült, és a rendszer `fetch` parancsát használja. A JSON feldolgozásához a következő szükséges:
+Configuration file:
 
 ```text
-/usr/local/bin/jq
+600
 ```
 
-Ha nincs telepítve, telepítsd az OPNsense plugin/package kezelésén keresztül.
+The configuration file contains the GoDaddy credential and must therefore remain readable only by the appropriate system account.
 
-## Licenc
+## Security
+
+Never:
+
+- commit `/etc/godaddy-ddns.conf`
+- put credentials in `README.md`
+- hard-code credentials in `godaddy-ddns.sh`
+- publish credentials in GitHub issues, pull requests, or discussions
+
+The GitHub repository contains only the application code. Credentials remain local to the OPNsense system.
+
+## License
 
 MIT

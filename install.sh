@@ -5,7 +5,7 @@
 
 set -eu
 
-REPO_RAW="https://raw.githubusercontent.com/SAJAT-FELHASZNALO/godaddy-ddns-opnsense/main"
+REPO_RAW="https://raw.githubusercontent.com/Deniel11/install-godaddy-ddns/main"
 
 TARGET="/usr/local/sbin/godaddy-ddns.sh"
 TMP="/tmp/godaddy-ddns.sh.$$"
@@ -17,9 +17,14 @@ cleanup()
 
 trap cleanup EXIT INT TERM
 
+command -v curl >/dev/null 2>&1 || {
+    echo "ERROR: curl is required."
+    exit 1
+}
+
 echo "Downloading GoDaddy DDNS script..."
 
-if ! fetch -qo "$TMP" "${REPO_RAW}/godaddy-ddns.sh"; then
+if ! curl -fsSL -o "$TMP" "${REPO_RAW}/godaddy-ddns.sh"; then
     echo "ERROR: Could not download godaddy-ddns.sh"
     exit 1
 fi
@@ -29,14 +34,12 @@ if [ ! -s "$TMP" ]; then
     exit 1
 fi
 
-chmod 700 "$TMP"
-
-# Basic sanity check before replacing the installed script.
 if ! grep -q 'GoDaddy Dynamic DNS for OPNsense' "$TMP"; then
     echo "ERROR: Downloaded file does not look like the expected script."
     exit 1
 fi
 
+chmod 700 "$TMP"
 mkdir -p /usr/local/sbin
 
 if [ -f "$TARGET" ]; then
@@ -51,8 +54,6 @@ echo "Installed:"
 echo "  $TARGET"
 echo ""
 
-# First installation: configure.
-# Existing installation: leave configuration untouched.
 if [ ! -f /etc/godaddy-ddns.conf ]; then
     "$TARGET" --configure
 else

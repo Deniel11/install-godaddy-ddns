@@ -2,23 +2,19 @@
 
 # GoDaddy Dynamic DNS for OPNsense
 
-VERSION="1.0.0"
+VERSION="1.1.0"
 
 CONFIG="/etc/godaddy-ddns.conf"
 LOG="/var/log/godaddy-ddns.log"
 TARGET="/usr/local/sbin/godaddy-ddns.sh"
 
-REPO_RAW="https://raw.githubusercontent.com/SAJAT-FELHASZNALO/godaddy-ddns-opnsense/main"
+REPO_RAW="https://raw.githubusercontent.com/Deniel11/install-godaddy-ddns/main"
 
 DEFAULT_DOMAIN="your.domain"
 DEFAULT_HOST="vpn"
 DEFAULT_TTL="600"
 
 umask 077
-
-# ------------------------------------------------------------
-# Helpers
-# ------------------------------------------------------------
 
 die()
 {
@@ -34,22 +30,18 @@ require_command()
 load_config()
 {
     [ -f "$CONFIG" ] || return 0
-
-    # shellcheck disable=SC1090
     . "$CONFIG"
 }
 
 save_config()
 {
     umask 077
-
     cat > "$CONFIG" <<EOF
 DOMAIN='$DOMAIN'
 HOST='$HOST'
 TTL='$TTL'
 GODADDY_PAT='$GODADDY_PAT'
 EOF
-
     chmod 600 "$CONFIG"
 }
 
@@ -101,9 +93,8 @@ configure()
     echo ""
 
     if [ -n "$OLD_PAT" ]; then
-        printf "GoDaddy PAT [configured]: "
+        printf "GoDaddy Personal Access Token [configured]: "
         read -r NEW_PAT
-
         if [ -n "$NEW_PAT" ]; then
             GODADDY_PAT="$NEW_PAT"
         else
@@ -119,12 +110,10 @@ configure()
     [ -n "$DOMAIN" ] || die "Domain cannot be empty."
     [ -n "$HOST" ] || die "Host cannot be empty."
     [ -n "$TTL" ] || die "TTL cannot be empty."
-    [ -n "$GODADDY_PAT" ] || die "GoDaddy PAT cannot be empty."
+    [ -n "$GODADDY_PAT" ] || die "GoDaddy Personal Access Token cannot be empty."
 
     case "$TTL" in
-        *[!0-9]*)
-            die "TTL must contain only numbers."
-            ;;
+        *[!0-9]*) die "TTL must contain only numbers." ;;
     esac
 
     echo "Configuration:"
@@ -153,20 +142,20 @@ configure()
 
 check_dependencies()
 {
-    require_command fetch
+    require_command curl
     require_command jq
 }
 
 get_public_ip()
 {
-    fetch -qo- "https://api.ipify.org"
+    curl -fsSL "https://api.ipify.org"
 }
 
 get_dns_response()
 {
-    fetch -qo- \
-        -H "Authorization: sso-key ${GODADDY_PAT}" \
-        "${API}?type=A&name=${HOST}"
+    curl -fsSL \
+        -H "Authorization: sso-key $GODADDY_PAT" \
+        "$API?type=A&name=$HOST"
 }
 
 get_dns_ip()
@@ -187,19 +176,15 @@ run_ddns()
 
     API="https://api.godaddy.com/v3/domains/zones/${DOMAIN}/dns-records"
 
-    CURRENT_IP=$(get_public_ip || true)
-
-    if [ -z "$CURRENT_IP" ]; then
+    CURRENT_IP=$(get_public_ip) || {
         echo "$(date '+%Y-%m-%d %H:%M:%S') ERROR: Could not determine public IP" >> "$LOG"
         exit 1
-    fi
+    }
 
-    DNS_RESPONSE=$(get_dns_response || true)
-
-    if [ -z "$DNS_RESPONSE" ]; then
+    DNS_RESPONSE=$(get_dns_response) || {
         echo "$(date '+%Y-%m-%d %H:%M:%S') ERROR: Could not read DNS record" >> "$LOG"
         exit 1
-    fi
+    }
 
     DNS_IP=$(get_dns_ip "$DNS_RESPONSE")
 
@@ -210,31 +195,26 @@ run_ddns()
     fi
 
     if [ "$CURRENT_IP" = "$DNS_IP" ]; then
-        echo "$(date '+%Y-%m-%d %H:%M:%S') OK: IP unchanged: ${CURRENT_IP}" >> "$LOG"
+        echo "$(date '+%Y-%m-%d %H:%M:%S') OK: IP unchanged: $CURRENT_IP" >> "$LOG"
         exit 0
     fi
 
-    BODY="[{\"data\":\"${CURRENT_IP}\",\"ttl\":${TTL}}]"
+    BODY="[\"{\\"data\\":\\"${CURRENT_IP}\\",\\"ttl\\":${TTL}}\"]"
     RESPONSE_FILE="/tmp/godaddy-ddns-response.$$.json"
 
-    if fetch -q -o "$RESPONSE_FILE" \
+    if curl -fsSL -o "$RESPONSE_FILE" \
         -X PUT \
-        -H "Authorization: sso-key ${GODADDY_PAT}" \
+        -H "Authorization: sso-key $GODADDY_PAT" \
         -H "Content-Type: application/json" \
-        -d "$BODY" \
-        "${API}?type=A&name=${HOST}"
+        --data "$BODY" \
+        "$API?type=A&name=$HOST"
     then
-        echo "$(date '+%Y-%m-%d %H:%M:%S') UPDATED: ${DNS_IP} -> ${CURRENT_IP}" >> "$LOG"
+        echo "$(date '+%Y-%m-%d %H:%M:%S') UPDATED: $DNS_IP -> $CURRENT_IP" >> "$LOG"
         rm -f "$RESPONSE_FILE"
         exit 0
     else
         echo "$(date '+%Y-%m-%d %H:%M:%S') ERROR: GoDaddy DNS update failed" >> "$LOG"
-
-        if [ -f "$RESPONSE_FILE" ]; then
-            cat "$RESPONSE_FILE" >> "$LOG"
-            echo "" >> "$LOG"
-        fi
-
+        [ -f "$RESPONSE_FILE" ] && cat "$RESPONSE_FILE" >> "$LOG"
         rm -f "$RESPONSE_FILE"
         exit 1
     fi
@@ -252,12 +232,8 @@ check()
 
     API="https://api.godaddy.com/v3/domains/zones/${DOMAIN}/dns-records"
 
-    CURRENT_IP=$(get_public_ip || true)
-    [ -n "$CURRENT_IP" ] || die "Could not determine public IP."
-
-    DNS_RESPONSE=$(get_dns_response || true)
-    [ -n "$DNS_RESPONSE" ] || die "Could not read GoDaddy DNS record."
-
+    CURRENT_IP=$(get_public_ip) || die "Could not determine public IP."
+    DNS_RESPONSE=$(get_dns_response) || die "Could not read GoDaddy DNS record."
     DNS_IP=$(get_dns_ip "$DNS_RESPONSE")
 
     echo ""
@@ -280,20 +256,20 @@ update_script()
 
     echo "Downloading latest version from GitHub..."
 
-    if ! fetch -qo "$TMP" "${REPO_RAW}/godaddy-ddns.sh"; then
+    if ! curl -fsSL -o "$TMP" "${REPO_RAW}/godaddy-ddns.sh"; then
         rm -f "$TMP"
         die "Could not download latest version."
     fi
 
-    if [ ! -s "$TMP" ]; then
+    [ -s "$TMP" ] || {
         rm -f "$TMP"
         die "Downloaded file is empty."
-    fi
+    }
 
-    if ! grep -q 'GoDaddy Dynamic DNS for OPNsense' "$TMP"; then
+    grep -q 'GoDaddy Dynamic DNS for OPNsense' "$TMP" || {
         rm -f "$TMP"
         die "Downloaded file does not look like the expected script."
-    fi
+    }
 
     chmod 700 "$TMP"
 
@@ -304,11 +280,8 @@ update_script()
     mv "$TMP" "$TARGET"
     chmod 700 "$TARGET"
 
-    echo "Updated:"
-    echo "  $TARGET"
-    echo ""
-    echo "Configuration was preserved:"
-    echo "  $CONFIG"
+    echo "Updated: $TARGET"
+    echo "Configuration preserved: $CONFIG"
 }
 
 usage()
@@ -318,9 +291,9 @@ GoDaddy DDNS for OPNsense
 
 Usage:
   $TARGET                 Update DNS if public IP changed
-  $TARGET --configure     Configure/reconfigure
+  $TARGET --configure     Configure or reconfigure
   $TARGET --check         Check public IP and DNS without updating
-  $TARGET --update        Download latest script from GitHub
+  $TARGET --update        Download the latest script from GitHub
   $TARGET --version       Show version
   $TARGET --help          Show this help
 
