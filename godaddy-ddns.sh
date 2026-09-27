@@ -52,12 +52,12 @@ ask_value()
     DEFAULT="$3"
 
     if [ -n "$CURRENT" ]; then
-        printf "%s [%s]: " "$LABEL" "$CURRENT"
+        printf "%s [%s]: " "$LABEL" "$CURRENT" > /dev/tty
     else
-        printf "%s [%s]: " "$LABEL" "$DEFAULT"
+        printf "%s [%s]: " "$LABEL" "$DEFAULT" > /dev/tty
     fi
 
-    read -r VALUE
+    read -r VALUE < /dev/tty
 
     if [ -z "$VALUE" ]; then
         if [ -n "$CURRENT" ]; then
@@ -69,7 +69,6 @@ ask_value()
 
     printf '%s' "$VALUE"
 }
-
 configure()
 {
     OLD_DOMAIN="${DOMAIN:-}"
