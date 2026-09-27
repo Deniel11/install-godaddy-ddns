@@ -1,148 +1,47 @@
 #!/bin/sh
 
-# GoDaddy Dynamic DNS for OPNsense
+VERSION="1.2.0"
 
-VERSION="1.1.0"
+CONFIG_FILE="/etc/godaddy-ddns.conf"
+LOG_FILE="/var/log/godaddy-ddns.log"
+SCRIPT_PATH="/usr/local/sbin/godaddy-ddns.sh"
 
-CONFIG="/etc/godaddy-ddns.conf"
-LOG="/var/log/godaddy-ddns.log"
-TARGET="/usr/local/sbin/godaddy-ddns.sh"
+API="https://api.godaddy.com/v3/domains/zones"
 
-REPO_RAW="https://raw.githubusercontent.com/Deniel11/install-godaddy-ddns/main"
-
-DEFAULT_DOMAIN="your.domain"
-DEFAULT_HOST="vpn"
-DEFAULT_TTL="600"
-
-umask 077
+log()
+{
+    printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >> "$LOG_FILE"
+}
 
 die()
 {
-    echo "ERROR: $*" >&2
+    log "ERROR: $*"
+    printf '%s\n' "$*" >&2
     exit 1
-}
-
-require_command()
-{
-    command -v "$1" >/dev/null 2>&1 || die "Required command not found: $1"
 }
 
 load_config()
 {
-    [ -f "$CONFIG" ] || return 0
-    . "$CONFIG"
-}
-
-save_config()
-{
-    umask 077
-    cat > "$CONFIG" <<EOF
-DOMAIN='$DOMAIN'
-HOST='$HOST'
-TTL='$TTL'
-GODADDY_PAT='$GODADDY_PAT'
-EOF
-    chmod 600 "$CONFIG"
-}
-
-ask_value()
-{
-    LABEL="$1"
-    CURRENT="$2"
-    DEFAULT="$3"
-
-    if [ -n "$CURRENT" ]; then
-        printf "%s [%s]: " "$LABEL" "$CURRENT" > /dev/tty
-    else
-        printf "%s [%s]: " "$LABEL" "$DEFAULT" > /dev/tty
+    if [ ! -f "$CONFIG_FILE" ]; then
+        die "Configuration file not found: $CONFIG_FILE"
     fi
 
-    read -r VALUE < /dev/tty
+    # shellcheck disable=SC1090
+    . "$CONFIG_FILE"
 
-    if [ -z "$VALUE" ]; then
-        if [ -n "$CURRENT" ]; then
-            VALUE="$CURRENT"
-        else
-            VALUE="$DEFAULT"
-        fi
-    fi
-
-    printf '%s' "$VALUE"
-}
-configure()
-{
-    OLD_DOMAIN="${DOMAIN:-}"
-    OLD_HOST="${HOST:-}"
-    OLD_TTL="${TTL:-}"
-    OLD_PAT="${GODADDY_PAT:-}"
-
-    echo ""
-    echo "======================================"
-    echo " GoDaddy Dynamic DNS configuration"
-    echo "======================================"
-    echo ""
-
-    DOMAIN=$(ask_value "Domain" "$OLD_DOMAIN" "$DEFAULT_DOMAIN")
-    echo ""
-
-    HOST=$(ask_value "Host" "$OLD_HOST" "$DEFAULT_HOST")
-    echo ""
-
-    TTL=$(ask_value "TTL" "$OLD_TTL" "$DEFAULT_TTL")
-    echo ""
-
-    if [ -n "$OLD_PAT" ]; then
-        printf "GoDaddy Personal Access Token [configured]: "
-        read -r NEW_PAT
-        if [ -n "$NEW_PAT" ]; then
-            GODADDY_PAT="$NEW_PAT"
-        else
-            GODADDY_PAT="$OLD_PAT"
-        fi
-    else
-        printf "GoDaddy Personal Access Token: "
-        read -r GODADDY_PAT
-    fi
-
-    echo ""
-
-    [ -n "$DOMAIN" ] || die "Domain cannot be empty."
-    [ -n "$HOST" ] || die "Host cannot be empty."
-    [ -n "$TTL" ] || die "TTL cannot be empty."
-    [ -n "$GODADDY_PAT" ] || die "GoDaddy Personal Access Token cannot be empty."
-
-    case "$TTL" in
-        *[!0-9]*) die "TTL must contain only numbers." ;;
-    esac
-
-    echo "Configuration:"
-    echo "  DOMAIN = $DOMAIN"
-    echo "  HOST   = $HOST"
-    echo "  TTL    = $TTL"
-    echo "  PAT    = ********"
-    echo ""
-
-    printf "Save configuration? [Y/n]: "
-    read -r CONFIRM
-
-    case "$CONFIRM" in
-        n|N|no|NO)
-            echo "Cancelled."
-            exit 0
-            ;;
-    esac
-
-    save_config
-
-    echo ""
-    echo "Configuration saved to:"
-    echo "  $CONFIG"
+    [ -n "$DOMAIN" ] || die "DOMAIN is not configured."
+    [ -n "$HOST" ] || die "HOST is not configured."
+    [ -n "$TTL" ] || die "TTL is not configured."
+    [ -n "$GODADDY_PAT" ] || die "GODADDY_PAT is not configured."
 }
 
 check_dependencies()
 {
-    require_command curl
-    require_command jq
+    command -v curl >/dev/null 2>&1 ||
+        die "curl is required."
+
+    command -v jq >/dev/null 2>&1 ||
+        die "jq is required."
 }
 
 get_public_ip()
@@ -153,8 +52,9 @@ get_public_ip()
 get_dns_response()
 {
     curl -fsSL \
-        -H "Authorization: sso-key $GODADDY_PAT" \
-        "$API?type=A&name=$HOST"
+        -H "Accept: application/json" \
+        -H "Authorization: Bearer $GODADDY_PAT" \
+        "$API/$DOMAIN/dns-records?type=A&name=$HOST"
 }
 
 get_dns_ip()
@@ -162,173 +62,246 @@ get_dns_ip()
     printf '%s' "$1" | jq -r '.items[0].data // empty'
 }
 
+get_dns_record_id()
+{
+    printf '%s' "$1" | jq -r '.items[0].recordId // empty'
+}
+
+validate_config()
+{
+    case "$TTL" in
+        *[!0-9]*)
+            die "TTL must be a number."
+            ;;
+    esac
+
+    if [ "$TTL" -lt 600 ] || [ "$TTL" -gt 86400 ]; then
+        die "TTL must be between 600 and 86400."
+    fi
+}
+
+save_config()
+{
+    umask 077
+
+    cat > "$CONFIG_FILE" <<EOF
+DOMAIN='$DOMAIN'
+HOST='$HOST'
+TTL='$TTL'
+GODADDY_PAT='$GODADDY_PAT'
+EOF
+
+    chmod 600 "$CONFIG_FILE"
+}
+
+configure()
+{
+    printf 'GoDaddy DDNS configuration\n\n'
+
+    printf 'Domain (example.com): '
+    read -r DOMAIN
+
+    printf 'Host (example.com or subdomain): '
+    read -r HOST
+
+    printf 'TTL [600]: '
+    read -r TTL
+
+    [ -n "$TTL" ] || TTL="600"
+
+    printf 'GoDaddy Personal Access Token: '
+    read -r GODADDY_PAT
+
+    [ -n "$DOMAIN" ] || die "Domain cannot be empty."
+    [ -n "$HOST" ] || die "Host cannot be empty."
+    [ -n "$GODADDY_PAT" ] || die "GoDaddy PAT cannot be empty."
+
+    validate_config
+    save_config
+
+    printf '\nConfiguration saved to %s\n' "$CONFIG_FILE"
+}
+
 run_ddns()
 {
     load_config
-
-    [ -n "${DOMAIN:-}" ] || die "No configuration found. Run: $TARGET --configure"
-    [ -n "${HOST:-}" ] || die "HOST is missing from configuration."
-    [ -n "${TTL:-}" ] || die "TTL is missing from configuration."
-    [ -n "${GODADDY_PAT:-}" ] || die "GODADDY_PAT is missing from configuration."
-
     check_dependencies
+    validate_config
 
-    API="https://api.godaddy.com/v3/domains/zones/${DOMAIN}/dns-records"
+    CURRENT_IP=$(get_public_ip) ||
+        die "Unable to determine public IP."
 
-    CURRENT_IP=$(get_public_ip) || {
-        echo "$(date '+%Y-%m-%d %H:%M:%S') ERROR: Could not determine public IP" >> "$LOG"
-        exit 1
-    }
+    [ -n "$CURRENT_IP" ] ||
+        die "Public IP lookup returned an empty result."
 
-    DNS_RESPONSE=$(get_dns_response) || {
-        echo "$(date '+%Y-%m-%d %H:%M:%S') ERROR: Could not read DNS record" >> "$LOG"
-        exit 1
-    }
+    DNS_RESPONSE=$(get_dns_response) ||
+        die "Unable to retrieve DNS record from GoDaddy."
 
     DNS_IP=$(get_dns_ip "$DNS_RESPONSE")
 
     if [ -z "$DNS_IP" ]; then
-        echo "$(date '+%Y-%m-%d %H:%M:%S') ERROR: Could not parse DNS A record" >> "$LOG"
-        echo "$DNS_RESPONSE" >> "$LOG"
-        exit 1
+        die "Unable to determine current DNS IP for $HOST.$DOMAIN."
     fi
 
     if [ "$CURRENT_IP" = "$DNS_IP" ]; then
-        echo "$(date '+%Y-%m-%d %H:%M:%S') OK: IP unchanged: $CURRENT_IP" >> "$LOG"
+        log "No update required. Current IP: $CURRENT_IP"
         exit 0
     fi
 
-    BODY="[\"{\\"data\\":\\"${CURRENT_IP}\\",\\"ttl\\":${TTL}}\"]"
-    RESPONSE_FILE="/tmp/godaddy-ddns-response.$$.json"
+    RECORD_ID=$(get_dns_record_id "$DNS_RESPONSE")
 
-    if curl -fsSL -o "$RESPONSE_FILE" \
+    if [ -z "$RECORD_ID" ]; then
+        die "Unable to determine GoDaddy DNS record ID."
+    fi
+
+    log "IP address changed: $DNS_IP -> $CURRENT_IP"
+    log "Updating DNS record ID: $RECORD_ID"
+
+    BODY=$(jq -n \
+        --arg name "$HOST" \
+        --arg data "$CURRENT_IP" \
+        --argjson ttl "$TTL" \
+        '{
+            name: $name,
+            type: "A",
+            data: $data,
+            ttl: $ttl
+        }'
+    ) || die "Unable to build DNS update payload."
+
+    RESPONSE_FILE=$(mktemp)
+
+    if curl -fsSL \
+        -o "$RESPONSE_FILE" \
         -X PUT \
-        -H "Authorization: sso-key $GODADDY_PAT" \
+        -H "Accept: application/json" \
+        -H "Authorization: Bearer $GODADDY_PAT" \
         -H "Content-Type: application/json" \
         --data "$BODY" \
-        "$API?type=A&name=$HOST"
+        "$API/$DOMAIN/dns-records/$RECORD_ID"
     then
-        echo "$(date '+%Y-%m-%d %H:%M:%S') UPDATED: $DNS_IP -> $CURRENT_IP" >> "$LOG"
+        log "DNS record updated successfully: $CURRENT_IP"
         rm -f "$RESPONSE_FILE"
         exit 0
     else
-        echo "$(date '+%Y-%m-%d %H:%M:%S') ERROR: GoDaddy DNS update failed" >> "$LOG"
-        [ -f "$RESPONSE_FILE" ] && cat "$RESPONSE_FILE" >> "$LOG"
+        log "Failed to update DNS record."
+        if [ -s "$RESPONSE_FILE" ]; then
+            log "GoDaddy response: $(cat "$RESPONSE_FILE")"
+        fi
         rm -f "$RESPONSE_FILE"
         exit 1
     fi
 }
 
-check()
+check_dns()
 {
     load_config
-
-    [ -n "${DOMAIN:-}" ] || die "No configuration found. Run: $TARGET --configure"
-    [ -n "${HOST:-}" ] || die "HOST is missing from configuration."
-    [ -n "${GODADDY_PAT:-}" ] || die "GODADDY_PAT is missing from configuration."
-
     check_dependencies
 
-    API="https://api.godaddy.com/v3/domains/zones/${DOMAIN}/dns-records"
+    DNS_RESPONSE=$(get_dns_response) ||
+        die "Unable to retrieve DNS record from GoDaddy."
 
-    CURRENT_IP=$(get_public_ip) || die "Could not determine public IP."
-    DNS_RESPONSE=$(get_dns_response) || die "Could not read GoDaddy DNS record."
     DNS_IP=$(get_dns_ip "$DNS_RESPONSE")
 
-    echo ""
-    echo "Domain : $DOMAIN"
-    echo "Host   : $HOST"
-    echo "Public : $CURRENT_IP"
-    echo "DNS    : ${DNS_IP:-not found}"
-    echo ""
-
-    if [ "$CURRENT_IP" = "$DNS_IP" ]; then
-        echo "Status : OK - IP is unchanged"
-    else
-        echo "Status : UPDATE REQUIRED"
+    if [ -z "$DNS_IP" ]; then
+        die "Unable to determine current DNS IP."
     fi
+
+    printf 'DNS IP: %s\n' "$DNS_IP"
+}
+
+install_script()
+{
+    if [ "$(id -u)" -ne 0 ]; then
+        die "This command must be run as root."
+    fi
+
+    mkdir -p "$(dirname "$SCRIPT_PATH")"
+
+    cp "$0" "$SCRIPT_PATH"
+    chmod 755 "$SCRIPT_PATH"
+
+    printf 'Installed to %s\n' "$SCRIPT_PATH"
 }
 
 update_script()
 {
-    TMP="/tmp/godaddy-ddns-update.$$.sh"
-
-    echo "Downloading latest version from GitHub..."
-
-    if ! curl -fsSL -o "$TMP" "${REPO_RAW}/godaddy-ddns.sh"; then
-        rm -f "$TMP"
-        die "Could not download latest version."
+    if [ "$(id -u)" -ne 0 ]; then
+        die "This command must be run as root."
     fi
 
-    [ -s "$TMP" ] || {
-        rm -f "$TMP"
-        die "Downloaded file is empty."
-    }
+    TMP_FILE=$(mktemp)
 
-    grep -q 'GoDaddy Dynamic DNS for OPNsense' "$TMP" || {
-        rm -f "$TMP"
-        die "Downloaded file does not look like the expected script."
-    }
-
-    chmod 700 "$TMP"
-
-    if [ -f "$TARGET" ]; then
-        cp "$TARGET" "${TARGET}.bak"
+    if ! curl -fsSL \
+        "https://raw.githubusercontent.com/Deniel11/install-godaddy-ddns/main/godaddy-ddns.sh" \
+        -o "$TMP_FILE"
+    then
+        rm -f "$TMP_FILE"
+        die "Unable to download the latest script."
     fi
 
-    mv "$TMP" "$TARGET"
-    chmod 700 "$TARGET"
+    if ! grep -q '^VERSION=' "$TMP_FILE"; then
+        rm -f "$TMP_FILE"
+        die "Downloaded file does not appear to be a valid DDNS script."
+    fi
 
-    echo "Updated: $TARGET"
-    echo "Configuration preserved: $CONFIG"
+    if [ -f "$SCRIPT_PATH" ]; then
+        cp "$SCRIPT_PATH" "$SCRIPT_PATH.bak"
+    fi
+
+    cp "$TMP_FILE" "$SCRIPT_PATH"
+    chmod 755 "$SCRIPT_PATH"
+
+    rm -f "$TMP_FILE"
+
+    printf 'Script updated: %s\n' "$SCRIPT_PATH"
 }
 
 usage()
 {
     cat <<EOF
-GoDaddy DDNS for OPNsense
+GoDaddy DDNS updater v$VERSION
 
 Usage:
-  $TARGET                 Update DNS if public IP changed
-  $TARGET --configure     Configure or reconfigure
-  $TARGET --check         Check public IP and DNS without updating
-  $TARGET --update        Download the latest script from GitHub
-  $TARGET --version       Show version
-  $TARGET --help          Show this help
+  $0 --configure
+  $0 --update
+  $0 --check
+  $0 --run
+
+Options:
+  --configure    Create or update the configuration file.
+  --update       Download the latest version from GitHub.
+  --check        Show the current GoDaddy DNS IP.
+  --run          Update the DNS record if the public IP changed.
+  --help         Show this help message.
 
 Configuration:
-  $CONFIG
+  $CONFIG_FILE
 
 Log:
-  $LOG
+  $LOG_FILE
 EOF
 }
 
 main()
 {
     case "${1:-}" in
-        --configure|-c)
-            load_config
+        --configure)
             configure
-            ;;
-        --check)
-            check
             ;;
         --update)
             update_script
             ;;
-        --version|-v)
-            echo "$VERSION"
+        --check)
+            check_dns
+            ;;
+        --run)
+            run_ddns
             ;;
         --help|-h)
             usage
             ;;
-        "")
-            run_ddns
-            ;;
         *)
-            echo "Unknown option: $1"
-            echo ""
             usage
             exit 1
             ;;
