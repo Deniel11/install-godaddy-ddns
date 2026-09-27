@@ -147,7 +147,7 @@ check_dependencies()
 
 get_public_ip()
 {
-    curl -fsSL "https://api.ipify.org"
+    curl -4 -fsSL "https://ifconfig.me"
 }
 
 get_dns_response()
