@@ -1,5 +1,7 @@
 #!/bin/sh
 
+# GoDaddy Dynamic DNS for OPNsense
+
 VERSION="1.2.0"
 
 CONFIG_FILE="/etc/godaddy-ddns.conf"
