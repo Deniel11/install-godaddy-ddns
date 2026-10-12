@@ -1,68 +1,41 @@
 #!/bin/sh
-
-# GoDaddy DDNS for OPNsense
-# GitHub installer / updater
-
 set -eu
 
 REPO_RAW="https://raw.githubusercontent.com/Deniel11/install-godaddy-ddns/main"
-
 TARGET="/usr/local/sbin/godaddy-ddns.sh"
-TMP="/tmp/godaddy-ddns.sh.$$"
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+TMP="${TMPDIR:-/tmp}/godaddy-ddns.sh.$$"
 
-cleanup()
-{
+cleanup() {
     rm -f "$TMP"
 }
+trap cleanup EXIT HUP INT TERM
 
-trap cleanup EXIT INT TERM
+[ "$(id -u)" -eq 0 ] || { printf 'Root privileges are required.\n' >&2; exit 1; }
+command -v curl >/dev/null 2>&1 || { printf 'Missing dependency: curl\n' >&2; exit 1; }
+command -v sh >/dev/null 2>&1 || { printf 'Missing dependency: sh\n' >&2; exit 1; }
 
-command -v curl >/dev/null 2>&1 || {
-    echo "ERROR: curl is required."
-    exit 1
-}
-
-echo "Downloading GoDaddy DDNS script..."
-
-if ! curl -fsSL -o "$TMP" "${REPO_RAW}/godaddy-ddns.sh"; then
-    echo "ERROR: Could not download godaddy-ddns.sh"
-    exit 1
+if [ -f "$SCRIPT_DIR/godaddy-ddns.sh" ]; then
+    cp "$SCRIPT_DIR/godaddy-ddns.sh" "$TMP"
+else
+    curl -fsSL "$REPO_RAW/godaddy-ddns.sh" -o "$TMP"
 fi
-
-if [ ! -s "$TMP" ]; then
-    echo "ERROR: Downloaded file is empty."
-    exit 1
-fi
-
-if ! grep -q 'GoDaddy Dynamic DNS for OPNsense' "$TMP"; then
-    echo "ERROR: Downloaded file does not look like the expected script."
-    exit 1
-fi
-
+[ -s "$TMP" ] || { printf 'The downloaded file is empty.\n' >&2; exit 1; }
+grep -q '^VERSION=' "$TMP" || { printf 'The downloaded file is not a valid DDNS script.\n' >&2; exit 1; }
+sh -n "$TMP" || { printf 'The downloaded script has a syntax error.\n' >&2; exit 1; }
 chmod 700 "$TMP"
-mkdir -p /usr/local/sbin
-
+mkdir -p "${TARGET%/*}"
 if [ -f "$TARGET" ]; then
-    cp "$TARGET" "${TARGET}.bak"
+    cp "$TARGET" "$TARGET.bak.$(date '+%Y%m%d%H%M%S')"
 fi
-
 mv "$TMP" "$TARGET"
 chmod 700 "$TARGET"
-
-echo ""
-echo "Installed:"
-echo "  $TARGET"
-echo ""
 
 if [ ! -f /etc/godaddy-ddns.conf ]; then
     "$TARGET" --configure
 else
-    echo "Existing configuration detected."
-    echo "Configuration was preserved."
-    echo ""
-    echo "Run this to change it:"
-    echo "  $TARGET --configure"
+    printf 'Existing configuration preserved: /etc/godaddy-ddns.conf\n'
 fi
 
-echo ""
-echo "Installation/update complete."
+"$TARGET" --install-action
+printf 'Installation complete. Check status with: %s --check\n' "$TARGET"

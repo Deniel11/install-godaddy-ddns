@@ -1,225 +1,86 @@
-# GoDaddy DDNS for OPNsense
+# GoDaddy Dynamic DNS
 
-A lightweight Dynamic DNS client for **OPNsense / FreeBSD** that keeps a GoDaddy DNS `A` record synchronized with the current public IPv4 address.
-
-## Features
-
-- Detects the current public IPv4 address using `api.ipify.org`
-- Reads the existing GoDaddy `A` record
-- Updates DNS only when the public IP changes
-- Interactive configuration with existing values offered as defaults
-- Default values:
-  - `DOMAIN`: `your.domain`
-  - `HOST`: `vpn`
-  - `TTL`: `600`
-- Stores the GoDaddy Personal Access Token outside the Git repository
-- Can update itself directly from this GitHub repository
-- Preserves the local configuration during script updates
-- Logs activity to `/var/log/godaddy-ddns.log`
-- Includes a read-only `--check` mode
-
-## Repository
-
-https://github.com/Deniel11/install-godaddy-ddns
-
-Repository layout:
-
-```text
-.
-├── README.md
-├── install.sh
-└── godaddy-ddns.sh
-```
+A POSIX shell Dynamic DNS client for GoDaddy-managed DNS zones. It supports multiple zones and multiple A records in one configuration, updates the zone apex (`@`), and automatically creates missing A records.
 
 ## Requirements
 
-The target system must provide:
-
-- OPNsense / FreeBSD
-- `curl`
-- `jq`
-
-The script is intended to run as `root`.
+- FreeBSD, OPNsense, or another POSIX `sh` environment
+- `curl`, `jq`, and `grep`
+- A GoDaddy Personal Access Token (PAT) with permission to read and modify DNS records
+- DNS zones hosted authoritatively by GoDaddy
 
 ## Installation
 
-Run the following commands from the OPNsense shell:
+Run as root:
 
 ```sh
-curl -fsSL -o /tmp/godaddy-ddns-install.sh \
-  https://raw.githubusercontent.com/Deniel11/install-godaddy-ddns/main/install.sh
-
-chmod 700 /tmp/godaddy-ddns-install.sh
-/tmp/godaddy-ddns-install.sh
+curl -fsSL https://raw.githubusercontent.com/Deniel11/install-godaddy-ddns/main/install.sh -o /tmp/godaddy-ddns-install.sh
+sh /tmp/godaddy-ddns-install.sh
 ```
 
-The installer:
-
-1. Downloads the latest `godaddy-ddns.sh`
-2. Installs it as `/usr/local/sbin/godaddy-ddns.sh`
-3. Creates a backup of an existing installation
-4. Starts configuration on first installation
-5. Preserves an existing configuration during upgrades
+The installer validates shell syntax before installation and backs up the previous script. On first installation, it starts the interactive configuration wizard. An existing `/etc/godaddy-ddns.conf` file is preserved.
 
 ## Configuration
 
-Run:
-
 ```sh
 /usr/local/sbin/godaddy-ddns.sh --configure
 ```
 
-The script asks for:
+The wizard can preserve the existing record list, replace it, or add records. The PAT is entered without displaying its characters in the terminal.
 
-```text
-Domain [your.domain]:
-Host [vpn]:
-TTL [600]:
-GoDaddy Personal Access Token:
-```
+| Zone | Record name | Fully qualified name |
+| --- | --- | --- |
+| `danielczank.eu` | `vpn` | `vpn.danielczank.eu` |
+| `danielczank.eu` | `@` | `danielczank.eu` |
+| `danielczank.eu` | `web-games-collection` | `web-games-collection.danielczank.eu` |
+| `jackthedog.eu` | `@` | `jackthedog.eu` |
 
-When a configuration already exists, the current values are offered as defaults. Press `Enter` to keep the existing value.
+Record names are relative to their DNS zone. Use `@` for the zone apex rather than entering the full domain name. Multiple records across multiple zones can be configured. The PAT must have access to every configured zone.
 
-The configuration is stored locally in:
-
-```text
-/etc/godaddy-ddns.conf
-```
-
-The file is created with permissions `600`.
-
-Example:
-
-```text
-DOMAIN='example.com'
-HOST='vpn'
-TTL='600'
-GODADDY_PAT='YOUR_PERSONAL_ACCESS_TOKEN'
-```
-
-**Do not commit this file to GitHub.**
-
-## GoDaddy Personal Access Token
-
-Create a GoDaddy Personal Access Token with the DNS permissions required for the domain.
-
-The script sends the token using the GoDaddy API authentication format:
-
-```text
-Authorization: sso-key <API_KEY>:<API_SECRET>
-```
-
-If your GoDaddy account provides a Personal Access Token as a single credential, use the credential format required by the current GoDaddy API documentation.
+The configuration file is `/etc/godaddy-ddns.conf` with permissions set to `600`. Records are stored in `RECORDS` as `zone|record-name` pairs separated by semicolons.
 
 ## Usage
 
-### Update DNS
-
-```sh
-/usr/local/sbin/godaddy-ddns.sh
-```
-
-The script:
-
-1. Gets the current public IPv4 address.
-2. Reads the current GoDaddy `A` record.
-3. Compares the addresses.
-4. Exits without changing DNS when they match.
-5. Updates the record when they differ.
-
-### Check status without changing DNS
-
 ```sh
 /usr/local/sbin/godaddy-ddns.sh --check
-```
-
-`--check` does not modify DNS.
-
-### Reconfigure
-
-```sh
+/usr/local/sbin/godaddy-ddns.sh --run
 /usr/local/sbin/godaddy-ddns.sh --configure
-```
-
-### Update the installed script
-
-```sh
-/usr/local/sbin/godaddy-ddns.sh --update
-```
-
-The update downloads:
-
-```text
-https://raw.githubusercontent.com/Deniel11/install-godaddy-ddns/main/godaddy-ddns.sh
-```
-
-The local configuration at `/etc/godaddy-ddns.conf` is not modified.
-
-The previous installed script is backed up as:
-
-```text
-/usr/local/sbin/godaddy-ddns.sh.bak
-```
-
-### Show version
-
-```sh
 /usr/local/sbin/godaddy-ddns.sh --version
-```
-
-### Show help
-
-```sh
 /usr/local/sbin/godaddy-ddns.sh --help
 ```
 
-## Automatic execution
+- `--check`: retrieves configured DNS records without changing them.
+- `--run`: retrieves the public IPv4 address, updates A records that differ, and creates missing A records.
+- `--configure`: starts the interactive configuration wizard.
+- `--install-action`: installs the OPNsense configd action.
+- `--uninstall-action`: removes the configd action.
+- `--update`: downloads the script from the GitHub `main` branch, validates its syntax, backs up the installed script, and installs the update.
 
-Run the script periodically using the OPNsense cron facility.
+The `--run` mode leaves records unchanged when they already point to the current public IPv4 address. If multiple A records exist for a configured name, each is checked and any differing records are updated. A CNAME is not automatically converted to an A record; GoDaddy may reject creating an A record for a name that conflicts with a CNAME, and the API error is logged.
 
-For example, every 5 minutes:
+## Cron
 
-```text
-*/5 * * * * /usr/local/sbin/godaddy-ddns.sh
+For example, to run every five minutes, add this to root's crontab:
+
+```cron
+*/5 * * * * /usr/local/sbin/godaddy-ddns.sh --run
 ```
 
-Running the script frequently is safe because it only performs a DNS update when the public IP has changed.
+## Logging and security
 
-## Logging
+The default log file is `/var/log/godaddy-ddns.log`. The configuration file is assigned permission `600`, and the installed script is assigned permission `700`. Do not commit the PAT to version control or share it in logs or bug reports.
 
-Log file:
+The script uses GoDaddy's v3 DNS API. It creates missing records with POST and updates existing records with PUT using their `recordId`. The supported TTL range is 600–86400 seconds.
 
-```text
-/var/log/godaddy-ddns.log
+## Local validation
+
+After copying the revised files into the local repository, run:
+
+```sh
+sh -n godaddy-ddns.sh
+sh -n install.sh
+./godaddy-ddns.sh --version
+./godaddy-ddns.sh --help
 ```
 
-## File permissions
-
-Installed script:
-
-```text
-700
-```
-
-Configuration file:
-
-```text
-600
-```
-
-The configuration file contains the GoDaddy credential and must therefore remain readable only by the appropriate system account.
-
-## Security
-
-Never:
-
-- commit `/etc/godaddy-ddns.conf`
-- put credentials in `README.md`
-- hard-code credentials in `godaddy-ddns.sh`
-- publish credentials in GitHub issues, pull requests, or discussions
-
-The GitHub repository contains only the application code. Credentials remain local to the OPNsense system.
-
-## License
-
-MIT
+Run `--check` first and review its output before using `--run`, which can make real changes to DNS records in GoDaddy.
