@@ -80,6 +80,33 @@ valid_ipv4() {
     return 0
 }
 
+is_public_ipv4() {
+    valid_ipv4 "$1" || return 1
+
+    case "$1" in
+        0.*|10.*|127.*|169.254.*|192.0.0.*|192.0.2.*|192.168.*|198.18.*|198.19.*|198.51.100.*|203.0.113.*)
+            return 1
+            ;;
+    esac
+
+    IP_OLD_IFS=$IFS
+    IFS=.
+    set -- $1
+    IFS=$IP_OLD_IFS
+
+    [ "$1" -lt 224 ] || return 1
+
+    if [ "$1" -eq 172 ] && [ "$2" -ge 16 ] && [ "$2" -le 31 ]; then
+        return 1
+    fi
+
+    if [ "$1" -eq 100 ] && [ "$2" -ge 64 ] && [ "$2" -le 127 ]; then
+        return 1
+    fi
+
+    return 0
+}
+
 validate_ttl() {
     case "$TTL" in ''|*[!0-9]*) return 1 ;; esac
     [ "$TTL" -ge 600 ] 2>/dev/null && [ "$TTL" -le 86400 ] 2>/dev/null
@@ -221,8 +248,24 @@ api_request() {
 }
 
 get_public_ip() {
-    PUBLIC_IP=$(curl -4 -fsSL --max-time 15 'https://api.ipify.org' 2>/dev/null) || fail "Could not retrieve the public IPv4 address."
-    valid_ipv4 "$PUBLIC_IP" || fail "The public IP service returned an invalid IPv4 address: $PUBLIC_IP"
+    for IP_URL in \
+        'https://ifconfig.me/ip' \
+        'https://checkip.amazonaws.com' \
+        'https://ipv4.icanhazip.com/' \
+        'https://api.ipify.org'
+    do
+        IP_CANDIDATE=$(curl -4 -fsSL --connect-timeout 3 --max-time 8 "$IP_URL" 2>/dev/null) || IP_CANDIDATE=""
+
+        if is_public_ipv4 "$IP_CANDIDATE"; then
+            PUBLIC_IP=$IP_CANDIDATE
+            log "Public IPv4 retrieved successfully from $IP_URL"
+            return 0
+        fi
+
+        log "WARNING: Public IPv4 lookup failed or returned an invalid address: $IP_URL"
+    done
+
+    fail "Could not retrieve a valid public IPv4 address from any configured service."
 }
 
 build_record_body() {
