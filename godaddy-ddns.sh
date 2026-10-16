@@ -238,9 +238,9 @@ api_request() {
     API_DATA=${3-}
     TEMP_BODY=$(mktemp "${TMPDIR:-/tmp}/godaddy-ddns.XXXXXX") || return 1
     if [ "$API_METHOD" = "GET" ]; then
-        HTTP_CODE=$(curl -sS -G -o "$TEMP_BODY" -w '%{http_code}' -H "Authorization: Bearer $GODADDY_PAT" -H 'Accept: application/json' --data-urlencode 'type=A' --data-urlencode "name=$CURRENT_HOST" --data-urlencode 'pageSize=100' "$API_URL") || HTTP_CODE=000
+        HTTP_CODE=$(curl --globoff -sS -G -o "$TEMP_BODY" -w '%{http_code}' -H "Authorization: Bearer $GODADDY_PAT" -H 'Accept: application/json' --data-urlencode 'type=A' --data-urlencode "name=$CURRENT_HOST" --data-urlencode 'pageSize=100' "$API_URL") || HTTP_CODE=000
     else
-        HTTP_CODE=$(curl -sS -o "$TEMP_BODY" -w '%{http_code}' -X "$API_METHOD" -H "Authorization: Bearer $GODADDY_PAT" -H 'Accept: application/json' -H 'Content-Type: application/json' --data "$API_DATA" "$API_URL") || HTTP_CODE=000
+        HTTP_CODE=$(curl --globoff -sS -o "$TEMP_BODY" -w '%{http_code}' -X "$API_METHOD" -H "Authorization: Bearer $GODADDY_PAT" -H 'Accept: application/json' -H 'Content-Type: application/json' --data "$API_DATA" "$API_URL") || HTTP_CODE=000
     fi
     API_BODY=$(cat "$TEMP_BODY" 2>/dev/null)
     rm -f "$TEMP_BODY"
