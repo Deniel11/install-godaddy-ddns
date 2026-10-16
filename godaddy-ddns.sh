@@ -1,6 +1,6 @@
 #!/bin/sh
 
-VERSION="2.0.0"
+VERSION="2.0.1"
 CONFIG_FILE="/etc/godaddy-ddns.conf"
 LOG_FILE="/var/log/godaddy-ddns.log"
 SCRIPT_PATH="/usr/local/sbin/godaddy-ddns.sh"
@@ -349,9 +349,11 @@ check_dns() {
 install_opnsense_action() {
     [ -d /usr/local/opnsense/service/conf/actions.d ] || { log "OPNsense configd directory not found; skipping integration."; return 0; }
     cat > "$OPNSENSE_ACTION_FILE" <<EOF_ACTION
-[godaddy_ddns]
+[run]
 command:/usr/local/sbin/godaddy-ddns.sh --run
 parameters:
+type:script
+message:Updating GoDaddy Dynamic DNS records
 description:Update GoDaddy Dynamic DNS records
 EOF_ACTION
     chmod 644 "$OPNSENSE_ACTION_FILE"
